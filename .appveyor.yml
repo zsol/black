@@ -22,5 +22,5 @@ deploy:
   auth_token:
     secure: uplI9CJ2dTGcEBCbZuIn+Qb4rC38hOoRSH9lcwuGCr5g9fSnhK1MZdNT6Cjf/mFL
   on:
-    appveyor_repo_tag: true
+    APPVEYOR_REPO_TAG: true
 
