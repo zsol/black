@@ -13,13 +13,18 @@ how this parsing engine works.
 # Local imports
 from . import token
 from .grammar import Grammar
-from typing import Any, Optional, Callable, Tuple, List, Set
+from typing import Any, Optional, Callable, Tuple, List, Set, Generic, TypeVar, Union
+
+Context = TypeVar("Context")
+UserNode = TypeVar("UserNode")
 
 
-class ParseError(Exception):
+class ParseError(Exception, Generic[Context]):
     """Exception to signal the parser is stuck."""
 
-    def __init__(self, msg: str, type: int, value: Any, context: Any) -> None:
+    def __init__(
+        self, msg: str, type: int, value: Optional[str], context: Optional[Context]
+    ) -> None:
         Exception.__init__(
             self, "%s: type=%r, value=%r, context=%r" % (msg, type, value, context)
         )
@@ -29,11 +34,11 @@ class ParseError(Exception):
         self.context = context
 
 
-Node = Tuple[int, Optional[str], Optional[Any], List[Any]]
+Node = Tuple[int, Optional[str], Optional[Context], List[Any]]
 DFA = Any
 
 
-class Parser:
+class Parser(Generic[Context, UserNode]):
     """Parser engine.
 
     The proper usage sequence is:
@@ -64,7 +69,9 @@ class Parser:
     """
 
     def __init__(
-        self, grammar: Grammar, convert: Optional[Callable[..., Any]] = None
+        self,
+        grammar: Grammar,
+        convert: Optional[Callable[[Grammar, Node], UserNode]] = None,
     ) -> None:
         """Constructor.
 
@@ -95,7 +102,11 @@ class Parser:
 
         """
         self.grammar = grammar
-        self.convert = convert or (lambda grammar, node: node)
+        self.convert = convert or (lambda grammar, node: node)  # type: ignore
+        self.rootnode: Optional[UserNode] = None
+        self.used_names: Set[
+            str
+        ] = set()  # Aliased to self.rootnode.used_names in pop()
 
     def setup(self, start: Optional[int] = None) -> None:
         """Prepare for parsing.
@@ -118,12 +129,10 @@ class Parser:
         newnode: Node = (start, None, None, [])
         stackentry = (self.grammar.dfas[start], 0, newnode)
         self.stack = [stackentry]
-        self.rootnode: Optional[Any] = None
-        self.used_names: Set[
-            str
-        ] = set()  # Aliased to self.rootnode.used_names in pop()
+        self.rootnode = None
+        self.used_names = set()
 
-    def addtoken(self, type: int, value: Optional[str], context: Any) -> bool:
+    def addtoken(self, type: int, value: Optional[str], context: Context) -> bool:
         """Add a token; return True iff this is the end of the program."""
         # Map from token to label
         ilabel = self.classify(type, value, context)
@@ -170,7 +179,7 @@ class Parser:
                     # No success finding a transition
                     raise ParseError("bad input", type, value, context)
 
-    def classify(self, type: int, value: Optional[str], context: Any) -> Any:
+    def classify(self, type: int, value: Optional[str], context: Context) -> Any:
         """Turn a token into a label.  (Internal)"""
         if type == token.NAME:
             assert value is not None
@@ -186,17 +195,17 @@ class Parser:
         return ilabel
 
     def shift(
-        self, type: int, value: Optional[str], newstate: int, context: Any
+        self, type: int, value: Optional[str], newstate: int, context: Context
     ) -> None:
         """Shift a token.  (Internal)"""
         dfa, state, node = self.stack[-1]
-        newnode = (type, value, context, None)
+        newnode: Node = (type, value, context, [])
         converted_node = self.convert(self.grammar, newnode)
         if converted_node is not None:
             node[-1].append(converted_node)
         self.stack[-1] = (dfa, newstate, node)
 
-    def push(self, type: int, newdfa: DFA, newstate: int, context: Any) -> None:
+    def push(self, type: int, newdfa: DFA, newstate: int, context: Context) -> None:
         """Push a nonterminal.  (Internal)"""
         dfa, state, node = self.stack[-1]
         newnode: Node = (type, None, context, [])
@@ -206,7 +215,7 @@ class Parser:
     def pop(self) -> None:
         """Pop a nonterminal.  (Internal)"""
         popdfa, popstate, popnode = self.stack.pop()
-        newnode = self.convert(self.grammar, popnode)
+        newnode: UserNode = self.convert(self.grammar, popnode)  # type: ignore
         if newnode is not None:
             if self.stack:
                 dfa, state, node = self.stack[-1]
