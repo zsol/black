@@ -12,19 +12,28 @@ how this parsing engine works.
 
 # Local imports
 from . import token
+from .grammar import Grammar
+from typing import Any, Optional, Callable, Tuple, List, Set
+
 
 class ParseError(Exception):
     """Exception to signal the parser is stuck."""
 
-    def __init__(self, msg, type, value, context):
-        Exception.__init__(self, "%s: type=%r, value=%r, context=%r" %
-                           (msg, type, value, context))
+    def __init__(self, msg: str, type: int, value: Any, context: Any) -> None:
+        Exception.__init__(
+            self, "%s: type=%r, value=%r, context=%r" % (msg, type, value, context)
+        )
         self.msg = msg
         self.type = type
         self.value = value
         self.context = context
 
-class Parser(object):
+
+Node = Tuple[int, Optional[str], Optional[Any], List[Any]]
+DFA = Any
+
+
+class Parser:
     """Parser engine.
 
     The proper usage sequence is:
@@ -54,7 +63,9 @@ class Parser(object):
 
     """
 
-    def __init__(self, grammar, convert=None):
+    def __init__(
+        self, grammar: Grammar, convert: Optional[Callable[..., Any]] = None
+    ) -> None:
         """Constructor.
 
         The grammar argument is a grammar.Grammar instance; see the
@@ -86,7 +97,7 @@ class Parser(object):
         self.grammar = grammar
         self.convert = convert or (lambda grammar, node: node)
 
-    def setup(self, start=None):
+    def setup(self, start: Optional[int] = None) -> None:
         """Prepare for parsing.
 
         This *must* be called before starting to parse.
@@ -104,13 +115,15 @@ class Parser(object):
         # Each stack entry is a tuple: (dfa, state, node).
         # A node is a tuple: (type, value, context, children),
         # where children is a list of nodes or None, and context may be None.
-        newnode = (start, None, None, [])
+        newnode: Node = (start, None, None, [])
         stackentry = (self.grammar.dfas[start], 0, newnode)
         self.stack = [stackentry]
-        self.rootnode = None
-        self.used_names = set() # Aliased to self.rootnode.used_names in pop()
+        self.rootnode: Optional[Any] = None
+        self.used_names: Set[
+            str
+        ] = set()  # Aliased to self.rootnode.used_names in pop()
 
-    def addtoken(self, type, value, context):
+    def addtoken(self, type: int, value: Optional[str], context: Any) -> bool:
         """Add a token; return True iff this is the end of the program."""
         # Map from token to label
         ilabel = self.classify(type, value, context)
@@ -145,22 +158,22 @@ class Parser(object):
                     if ilabel in itsfirst:
                         # Push a symbol
                         self.push(t, self.grammar.dfas[t], newstate, context)
-                        break # To continue the outer while loop
+                        break  # To continue the outer while loop
             else:
                 if (0, state) in arcs:
                     # An accepting state, pop it and try something else
                     self.pop()
                     if not self.stack:
                         # Done parsing, but another token is input
-                        raise ParseError("too much input",
-                                         type, value, context)
+                        raise ParseError("too much input", type, value, context)
                 else:
                     # No success finding a transition
                     raise ParseError("bad input", type, value, context)
 
-    def classify(self, type, value, context):
+    def classify(self, type: int, value: Optional[str], context: Any) -> Any:
         """Turn a token into a label.  (Internal)"""
         if type == token.NAME:
+            assert value is not None
             # Keep a listing of all used names
             self.used_names.add(value)
             # Check for reserved words
@@ -172,23 +185,25 @@ class Parser(object):
             raise ParseError("bad token", type, value, context)
         return ilabel
 
-    def shift(self, type, value, newstate, context):
+    def shift(
+        self, type: int, value: Optional[str], newstate: int, context: Any
+    ) -> None:
         """Shift a token.  (Internal)"""
         dfa, state, node = self.stack[-1]
         newnode = (type, value, context, None)
-        newnode = self.convert(self.grammar, newnode)
-        if newnode is not None:
-            node[-1].append(newnode)
+        converted_node = self.convert(self.grammar, newnode)
+        if converted_node is not None:
+            node[-1].append(converted_node)
         self.stack[-1] = (dfa, newstate, node)
 
-    def push(self, type, newdfa, newstate, context):
+    def push(self, type: int, newdfa: DFA, newstate: int, context: Any) -> None:
         """Push a nonterminal.  (Internal)"""
         dfa, state, node = self.stack[-1]
-        newnode = (type, None, context, [])
+        newnode: Node = (type, None, context, [])
         self.stack[-1] = (dfa, newstate, node)
         self.stack.append((newdfa, 0, newnode))
 
-    def pop(self):
+    def pop(self) -> None:
         """Pop a nonterminal.  (Internal)"""
         popdfa, popstate, popnode = self.stack.pop()
         newnode = self.convert(self.grammar, popnode)
@@ -198,4 +213,5 @@ class Parser(object):
                 node[-1].append(newnode)
             else:
                 self.rootnode = newnode
-                self.rootnode.used_names = self.used_names
+                setattr(self.rootnode, "used_names", self.used_names)
+
